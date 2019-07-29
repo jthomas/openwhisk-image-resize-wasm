@@ -1,61 +1,62 @@
-# Cloudflare Workers WebAssembly Demo
+# Apache OpenWhisk Image Resizing with WebAssembly
 
-This repository implements image resizing that runs on Cloudflare's edge network using
-[WebAssembly in a Cloudflare Worker](https://blog.cloudflare.com/webassembly-on-cloudflare-workers).
+This repository contains a serverless function (for Apache OpenWhisk) to resize images using a C library called via WebAssembly. It is a fork of [original code](https://github.com/cloudflare/cloudflare-workers-wasm-demo) created by Cloudflare for their Workers platform. See the original repository for details on what the repository contains and how the files work. 
 
-For this demo, we sought to minimize the dependencies of the WASM code, so that we could completely
-avoid the need for a C standard library. A more practical approach to building WASM applications
-would be to use [Emscripten](http://emscripten.org) to provide a working library. However, as of
-this writing, Emscripten still needs some tweaks to correctly target Cloudflare Workers.
+## Usage
 
-In order to minimize dependencies, we implement image encoding, decoding, and resizing using the
-[stb library](https://github.com/nothings/stb).
+- Create deployment package from source files.
 
-## What's in this repository
+```
+zip action.zip resizer.wasm package.json worker.js
+```
 
-* `main.c` -- The C code to be complied to WebAssembly.
-* `stb` -- Git submodule pointing to [the stb library](https://github.com/nothings/stb), which
-  provides single-file implementations of image-handling operations.
-* `bootstrap.h` -- Minimal implementation of C library functions needed by stb.
-* `stubs` -- Fake, empty C header files, just to satisfy the `#include`s in stb.
-* `worker.js` -- Cloudflare Worker JavaScript that loads and runs the WASM.
-* `worker-metadata.json` -- Used when uploading the worker via the API, to bind the worker to the
-   WASM. Not needed when uploading via the UI.
+- Create Apache OpenWhisk action from deployment package.
 
-## How to build
+```
+ibmcloud wsk action update resizer action.zip --kind nodejs:10 --web true
+```
 
-1. Install Clang.
-2. [Build lld from source](https://lld.llvm.org/getting_started.html) in order to get the `wasm-ld`
-   tool. You may need to pass these flags on the `cmake` command line:
-   `-DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD=WebAssembly -DLLVM_TARGETS_TO_BUILD=WebAssembly`
-3. `make`
+- Retrieve HTTP URL for Web Action.
 
-## How to deploy
+```
+ibmcloud wsk action get resizer --url
+ok: got action resizer
+https://<region>.cloud.ibm.com/api/v1/web/<ns>/default/resizer <-- USE THIS URL
+```
 
-Via the UI:
+- Open the HTTP URL with the `.http` extension.
 
-1. Create a script in the "Workers" tab of the Cloudflare dashboard.
-2. Copy the contents of `worker.js` into the script editor.
-3. Click on `Resources` at the top of the script editor.
-4. Create a WebAssembly binding named `RESIZER_WASM`.
-5. Upload `resizer.wasm` to this binding.
-6. Save the script.
-7. Create a route where your script will run.
-8. Now any image file under that route will accept a `?width=` query parameter to
-   downscale the image.
+```
+https://<region>.cloud.ibm.com/api/v1/web/<ns>/default/resizer.http
+```
 
-Via the API -- free/pro/biz (single-script) users -- THIS WILL REPLACE YOUR EXISTING SCRIPT:
+This should return the following image resized to 250 pixels (from 900 pixels). 
 
-    curl -X PUT -H "X-Auth-Email: $API_EMAIL" -H "X-Auth-Key: $API_KEY" \
-	      "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/workers/script" \
-		    -F metadata=@worker-metadata.json \
-		    -F script=@worker.js \
-		    -F wasm=@resizer.wasm
+![Pug with Ice-cream](https://bit.ly/2ZlP838)
 
-Via the API -- enterprise (multi-script) users -- creates a script named "wasm-demo":
+URL query parameters (`url` and `width`) can be used to modify the image source or output width for the next image, e.g. 
 
-    curl -X PUT -H "X-Auth-Email: $API_EMAIL" -H "X-Auth-Key: $API_KEY" \
-	      "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/workers/scripts/wasm-demo" \
-		    -F metadata=@worker-metadata.json \
-		    -F script=@worker.js \
-		    -F wasm=@resizer.wasm
+```
+https://<region>.cloud.ibm.com/api/v1/web/<ns>/default/resizer.http?url=<IMG_URL>&width=500
+```
+
+## How to re-build WASM file (OS X)
+
+- Install LLVM.
+
+```
+brew install llvm
+brew link --force llvm
+```
+
+- Remove existing WASM file (`resize.wasm`)
+
+````
+make clean
+````
+
+- Run build command (which uses `clang`).
+
+```
+make build
+```

@@ -1,0 +1,22 @@
+{
+  "name": "openwhisk-image-resize-wasm",
+  "version": "1.0.0",
+  "description": "Running image resizing serverless functions using WebAssembly and Apache OpenWhisk.",
+  "main": "worker.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jthomas/openwhisk-image-resize-wasm.git"
+  },
+  "author": "James Thomas <james@jamesthom.as> (https://jamesthom.as)",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/jthomas/openwhisk-image-resize-wasm/issues"
+  },
+  "homepage": "https://github.com/jthomas/openwhisk-image-resize-wasm#readme",
+  "dependencies": {
+    "node-fetch": "^2.6.0"
+  }
+}

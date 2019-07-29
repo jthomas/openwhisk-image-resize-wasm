@@ -1,67 +1,79 @@
-// REQUIRED: When configuring this worker script, in the UI, go to the "resource" tab, create a
-//   new WebAssembly module resource, name it "RESIZER_WASM", and upload resizer.wasm.
-//   OR, upload via the API (see `upload` in Makefile).
+'use strict';
+const fs = require('fs');
+const fetch = require('node-fetch');
 
-// Instantiate the WebAssembly module with 32MB of memory.
-const wasmMemory = new WebAssembly.Memory({initial: 512});
-const wasmInstance = new WebAssembly.Instance(
-    // RESIZER_WASM is a global variable created through the Resource Bindings UI (or API).
-    RESIZER_WASM,
+const RESIZER_WASM = 'resizer.wasm'
+// 🐶🐶🐶
+const DEFAULT_IMAGE = 'https://bit.ly/2ZlP838'
+const DEFAULT_WIDTH = '250'
 
-    // This second parameter is the imports object. Our module imports its memory object (so that
-    // we can allocate it ourselves), but doesn't require any other imports.
-    {env: {memory: wasmMemory}})
+// Used to cache loaded WASM instance and memory reference
+// between warm invocations.
+let wasm
 
-// Define some shortcuts.
-const resizer = wasmInstance.exports
-const memoryBytes = new Uint8Array(wasmMemory.buffer)
+async function load_wasm (path) {
+  if (!wasm) {
+    const bytes = fs.readFileSync(path);
+    const wasmModule = new WebAssembly.Module(bytes);
 
-// Now we can write our worker script.
-addEventListener("fetch", event => {
-  event.respondWith(handle(event.request))
-});
+    // Instantiate the WebAssembly module with 32MB of memory.
+    const wasmMemory = new WebAssembly.Memory({initial: 512});
+    const env = { memory: wasmMemory }
+    const wasmInstance = new WebAssembly.Instance(
+      wasmModule,
+      // This second parameter is the imports object. Our module imports its memory object (so that
+      // we can allocate it ourselves), but doesn't require any other imports.
+      {env: {memory: wasmMemory}})
 
-async function handle(request) {
+    wasm = { resizer: wasmInstance.exports, memoryBytes: new Uint8Array(wasmMemory.buffer) }
+  }
+  
+  return wasm
+}
+
+async function main({ url = DEFAULT_IMAGE, width = DEFAULT_WIDTH }) {
   // Forward the request to our origin.
-  let response = await fetch(request)
+  console.time('fetch')
+  let response = await fetch(url)
+  console.timeEnd('fetch')
 
-  // Check if the response is an image. If not, we'll just return it.
-  let type = response.headers.get("Content-Type") || ""
-  if (!type.startsWith("image/")) return response
+  if (!response.ok) throw new Error('Unable to fetch URL.')
+  const type = response.headers.get("Content-Type") || ""
+  if (!type.startsWith("image/")) throw new Error('URL is not an image.')
 
-  // Check if the `width` query parameter was specified in the URL. If not,
-  // don't resize -- just return the response directly.
-  let width = new URL(request.url).searchParams.get("width")
-  if (!width) return response
+  console.time('load_wasm')
+  const { resizer, memoryBytes } = await load_wasm(RESIZER_WASM)
+  console.timeEnd('load_wasm')
 
   // OK, we're going to resize. First, read the image data into memory.
   let bytes = new Uint8Array(await response.arrayBuffer())
 
+  console.log(`${bytes.length} byte image ready for resizing...`)
   // Call our WebAssembly module's init() function to allocate space for
   // the image.
-  let ptr = resizer.init(bytes.length)
+  console.time('init')
+  const ptr = resizer.init(bytes.length)
+  console.timeEnd('init')
 
   // Copy the image into WebAssembly memory.
   memoryBytes.set(bytes, ptr)
 
+  console.time('resize')
   // Call our WebAssembly module's resize() function to perform the resize.
-  let newSize = resizer.resize(bytes.length, parseInt(width))
+  const newSize = resizer.resize(bytes.length, parseInt(width, 10))
+  console.timeEnd('resize')
 
   if (newSize == 0) {
-    // Resizer didn't want to process this image, so just return it. Since
-    // we already read the response body, we need to reconstruct the
-    // response here from the bytes we read.
-    return new Response(bytes, response);
+    throw new Error('Failed to process image.')
   }
 
   // Extract the result bytes from WebAssembly memory.
-  let resultBytes = memoryBytes.slice(ptr, ptr + newSize)
-
-  // Create a new response with the image bytes. Our resizer module always
-  // outputs JPEG regardless of input type, so change the header.
-  let newResponse = new Response(resultBytes, response)
-  newResponse.headers.set("Content-Type", "image/jpeg")
+  const resultBytes = memoryBytes.slice(ptr, ptr + newSize)
+  const body = Buffer.from(resultBytes).toString('base64');
+  const headers = { 'Content-Type': 'image/jpeg' }
 
   // Return the response.
-  return newResponse
+  return { headers, body };
 }
+
+module.exports = { main }
